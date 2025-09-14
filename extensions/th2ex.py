@@ -269,7 +269,7 @@ sodipodi_insensitive = inkex.addNS('insensitive', 'sodipodi')
 sodipodi_nodetypes = inkex.addNS('nodetypes', 'sodipodi')
 
 
-def title_text(parent: EtreeElement) -> str | None:
+def title_text(parent: EtreeElement) -> Optional[str]:
     """
     If the given element has a <title> child, get its text content.
     """

@@ -142,7 +142,7 @@ class Th2SetProps(Th2Effect):
                 # update text align
                 if node.tag == th2ex.svg_text:
                     style = th2ex.get_style(node)
-                    style = th2ex.get_text_align_style(options.get('align', ''))
+                    style.update(th2ex.get_text_align_style(options.get('align', '')))
                     node.set('style', formatStyle(style))
 
             # update path effects
