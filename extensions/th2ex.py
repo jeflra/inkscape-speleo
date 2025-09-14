@@ -269,6 +269,14 @@ sodipodi_insensitive = inkex.addNS('insensitive', 'sodipodi')
 sodipodi_nodetypes = inkex.addNS('nodetypes', 'sodipodi')
 
 
+def title_text(parent: EtreeElement) -> str | None:
+    """
+    If the given element has a <title> child, get its text content.
+    """
+    title = parent.find(svg_title)
+    return None if title is None else title.text
+
+
 def title_node(parent: EtreeElement) -> EtreeElement:
     title = parent.find(svg_title)
     if title is None:
@@ -557,9 +565,9 @@ def get_props(e: EtreeElement) -> Tuple[str, str, OptionsDict]:
     assert e.get(therion_role) != 'scrap', 'Cannot use get_props for scraps'
 
     if th2pref.howtostore == 'inkscape_label':
-        label = e.get(inkscape_label) or title_node(e).text or ''
+        label = e.get(inkscape_label) or title_text(e) or ''
     else:
-        label = title_node(e).text or e.get(inkscape_label) or ''
+        label = title_text(e) or e.get(inkscape_label) or ''
 
     role, type, optionsstr = (label.split(None, 2) + [''] * 3)[:3]
     role = e.get(therion_role, role)
