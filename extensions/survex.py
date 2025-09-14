@@ -45,12 +45,15 @@ Example usage:
 
 '''
 
+from __future__ import annotations
+
 import datetime
 import sys
-from typing import Optional
+from os import PathLike
+from typing import BinaryIO, Iterable, Iterator, Optional, Tuple
 
 
-def autodecode(bytestring):
+def autodecode(bytestring: bytes) -> str:
     if b'\xc3' in bytestring:
         return bytestring.decode('utf-8')
     return bytestring.decode('latin1')
@@ -66,44 +69,59 @@ FLAGS_LEG_EXCLUDE_CAVE_LENGTH = (  #
     FLAG_LEG_SPLAY)
 
 
-class Station(object):
+Coord = int
+Coord3D = Tuple[Coord, Coord, Coord]
+
+
+def as_c3d(coords: Iterable[int]) -> Coord3D:
+    """
+    Helper for type checking, ensures that coords is a tuple of three integers.
+    """
+    a = tuple(coords)
+    assert len(a) == 3
+    return a
+
+
+class Station:
     '''
     Survey station
     '''
 
-    def __init__(self, xyz):
+    def __init__(self, xyz: Coord3D):
         assert isinstance(xyz, tuple)
+        assert len(xyz) == 3
+        assert all(isinstance(c, Coord) for c in xyz)
         self.xyz = xyz
-        self.labels = []
-        self.connected_from = []
-        self.connected_to = []
+        self.labels: list[str] = []
+        self.connected_from: list[Station] = []
+        self.connected_to: list[Station] = []
         self.flag = 0
-        self.date = DateNone
+        self.date: Date = DateNone
 
     def __repr__(self):
         return '<%s %s%s>' % (self.__class__.__name__,
                               ', '.join(self.labels[:3]),
                               ', ...' if len(self.labels) > 3 else '')
 
-    def connect(self, other):
+    def connect(self, other: Station):
         '''define a leg from other to self'''
         self.connected_from.append(other)
         other.connected_to.append(self)
 
-    def distance(self, other):
+    def distance(self, other: Station) -> float:
         '''Euclidean distance to other station'''
         return sum((a - b)**2 for (a, b) in zip(self.xyz, other.xyz))**0.5
 
-    def distance_vertical(self, other):
+    def distance_vertical(self, other: Station) -> float:
         '''Signed altitude difference to other station (if other is below
         self, distance is negative)'''
         return other.z - self.z
 
-    def distance_horizontal(self, other):
+    def distance_horizontal(self, other: Station) -> float:
         '''Horizontal distance to other station'''
         return ((self.x - other.x)**2 + (self.y - other.y)**2)**0.5
 
-    def bearing(self, other):
+    def bearing(self, other: Station) -> float:
         '''Compass direction to other station in degrees, 0.0 if other is
         north of self'''
         from math import atan2, degrees
@@ -116,11 +134,11 @@ class Station(object):
         from itertools import chain
         return chain(self.connected_from, self.connected_to)
 
-    def connected_deep(self):
+    def connected_deep(self) -> set[Station]:
         '''Set of all stations which are directly or indirectly connected to
         this station.
         '''
-        deep = set()
+        deep: set[Station] = set()
 
         def recurse(station):
             if station in deep:
@@ -134,14 +152,14 @@ class Station(object):
         return deep
 
     @property
-    def label(self):
+    def label(self) -> str:
         '''(First) label of this station'''
         if len(self.labels) == 0:
             return '<unnamed station>'
         return self.labels[0]
 
     @property
-    def therionlabel(self):
+    def therionlabel(self) -> str:
         '''Therion style label, x.y.z becomes z@y.x'''
         a = self.label.split('.')
         if len(a) == 1:
@@ -150,28 +168,28 @@ class Station(object):
         return a[0] + '@' + '.'.join(a[1:])
 
     @property
-    def x(self): return self.xyz[0]
+    def x(self) -> Coord: return self.xyz[0]
     @property
-    def y(self): return self.xyz[1]
+    def y(self) -> Coord: return self.xyz[1]
     @property
-    def z(self): return self.xyz[2]
+    def z(self) -> Coord: return self.xyz[2]
 
-    def is_surface(self):
+    def is_surface(self) -> bool:
         return bool(self.flag & 0x01)
 
-    def is_underground(self):
+    def is_underground(self) -> bool:
         return bool(self.flag & 0x02)
 
-    def is_entrance(self):
+    def is_entrance(self) -> bool:
         return bool(self.flag & 0x04)
 
-    def is_exported(self):
+    def is_exported(self) -> bool:
         return bool(self.flag & 0x08)
 
-    def is_fixed(self):
+    def is_fixed(self) -> bool:
         return bool(self.flag & 0x10)
 
-    def shortestpath(self, other, verbose=0):
+    def shortestpath(self, other: Station, verbose: int = 0) -> tuple[float, list[Station]]:
         '''
         Shortest Path between two stations. If verbose=2 then print path with
         station names.
@@ -189,10 +207,10 @@ class Station(object):
                 return p
             return [self]
 
-        came_from = {}        # Map for backtrace (reconstruct_path)
-        closedset = set()     # The set of nodes already evaluated.
+        came_from: dict[Station, Station] = {}        # Map for backtrace (reconstruct_path)
+        closedset: set[Station] = set()     # The set of nodes already evaluated.
         openset = [self]    # List sorted by f_score
-        g_score = {self: 0}  # Distance from self along optimal path.
+        g_score = {self: 0.0}  # Distance from self along optimal path.
         h_score = {self: self.distance(other)}  # Estimated lower bound from y to other
         f_score = {self: h_score[self]}        # Estimated total distance from self to other through y.
         while len(openset) > 0:
@@ -231,7 +249,7 @@ class Station(object):
         return -1, []
 
 
-class Survex3D(object):
+class Survex3D:
     '''
     Datastructure to represent a "Survex 3D Image File".
 
@@ -250,12 +268,14 @@ class Survex3D(object):
     names.
     '''
 
-    def __init__(self, filename=None, flags_leg_exclude=0):
+    def __init__(self,
+                 filename: PathLike | str | Iterable[Station] | None = None,
+                 flags_leg_exclude=0):
         self.clear()
         self.flags_leg_exclude = flags_leg_exclude
         if filename is None:
             pass
-        elif isinstance(filename, (str, bytes)) or hasattr(filename, "__fspath__"):
+        elif isinstance(filename, (str, bytes, PathLike)):
             self.load(filename)
         else:
             # assume iterable with stations
@@ -263,17 +283,17 @@ class Survex3D(object):
                 self.xyz2sta[station.xyz] = station
             self.reindex()
 
-    def clear(self):
+    def clear(self) -> None:
         '''Remove all stations'''
         self.title = '<unnamed survey>'
-        self.xyz2sta = {}  # Map of xyz to stations
-        self.lab2sta = {}  # Map of labels to stations
-        self.passages = []  # passages with LRUD data
-        self._prev = None
-        self._curr_label = ''
-        self._curr_date = DateNone
+        self.xyz2sta: dict[Coord3D, Station] = {}  # Map of xyz to stations
+        self.lab2sta: dict[str, Station] = {}  # Map of labels to stations
+        self.passages: list[tuple[str, list[int]] | None] = []  # passages with LRUD data
+        self._prev: Station | None = None
+        self._curr_label: str = ''
+        self._curr_date: Date = DateNone
 
-    def reindex(self):
+    def reindex(self) -> None:
         '''Update label to station mapping'''
         self.lab2sta = {}
         for station in self:
@@ -288,7 +308,7 @@ class Survex3D(object):
                                        len(self))
         return r
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str | Coord3D) -> Station:
         if isinstance(key, str):
             return self.lab2sta[key]
         if isinstance(key, tuple):
@@ -319,27 +339,27 @@ class Survex3D(object):
         if flag & 0x01:
             self.passages.append(None)
 
-    def extent(self):
+    def extent(self) -> tuple[Coord3D, Coord3D]:
         '''
         Get the boundig box of all stations as [[xmin, ymin, zmin], [xmax, ymax, zmax]]
         '''
-        return [
-            [min(station.xyz[i] for station in self) for i in range(3)],
-            [max(station.xyz[i] for station in self) for i in range(3)],
-        ]
+        return (
+            as_c3d((min(station.xyz[i] for station in self) for i in range(3))),
+            as_c3d((max(station.xyz[i] for station in self) for i in range(3))),
+        )
 
-    def length(self):
+    def length(self) -> float:
         '''Total length of survey shots (warning: does not consider duplicate
         or splay flags)'''
         return sum(s1.distance(s2) for (s1, s2) in self.iterlegs())
 
-    def depth(self):
+    def depth(self) -> float:
         '''Vertical range of all stations in this survey'''
         zmax = max(station.z for station in self)
         zmin = min(station.z for station in self)
         return zmax - zmin
 
-    def filter(self, prefix):
+    def filter(self, prefix: str) -> Iterable[Station]:
         '''
         Iterator over stations that have a label starting with prefix.
         '''
@@ -347,7 +367,7 @@ class Survex3D(object):
             if any(label.startswith(prefix) for label in station.labels):
                 yield station
 
-    def connected_deep(self, key):
+    def connected_deep(self, key: str | Coord3D) -> Survex3D:
         '''Sub-survey of all stations which are connected to the given station.
         '''
         sys.setrecursionlimit(max(sys.getrecursionlimit(), len(self)))
@@ -355,7 +375,7 @@ class Survex3D(object):
         sub.title = "Connected to {}".format(key)
         return sub
 
-    def _get_or_new(self, xyz):
+    def _get_or_new(self, xyz: Coord3D) -> Station:
         '''Like self.xyz2sta.setdefault(xyz, Station(xyz))'''
         station = self.xyz2sta.get(xyz)
         if station is None:
@@ -363,30 +383,30 @@ class Survex3D(object):
             station.date = self._curr_date
         return station
 
-    def iterstations(self):
+    def iterstations(self) -> Iterator[Station]:
         '''Iterator over all stations'''
         return iter(self.xyz2sta.values())
 
     __iter__ = iterstations
 
-    def iterlegs(self, dosort=False):
+    def iterlegs(self) -> Iterable[tuple[Station, Station]]:
         '''Iterator over tuples of stations that are connected by a leg'''
-        for station in self:
+        for station in self.iterstations():
             for other in station.connected_from:
                 # station could be connected to another one that is not
                 # member of this instance, so better check
                 if other.xyz in self.xyz2sta:
                     yield station, other
 
-    def iterlabels(self):
+    def iterlabels(self) -> Iterable[str]:
         '''Iterator over all station labels'''
         return iter(self.lab2sta)
 
-    def sortedlabels(self):
+    def sortedlabels(self) -> list[str]:
         '''Naturally sorted list of labels'''
         return sorted(self.lab2sta, key=natkey)
 
-    def print_points(self):
+    def print_points(self) -> None:
         '''
         Print stations as coords with station name to stdout, sorted by station
         names.
@@ -395,7 +415,7 @@ class Survex3D(object):
             station = self[label]
             print(('%6d %6d %6d  ' % station.xyz) + label)
 
-    def print_lrud(self):
+    def print_lrud(self) -> None:
         '''Print LRUD data'''
         for xsect in self.passages:
             if xsect is None:
@@ -403,11 +423,15 @@ class Survex3D(object):
             else:
                 print(xsect[0], xsect[1])
 
-    def shortestpath(self, key1, key2):
+    def shortestpath(
+        self,
+        key1: str | Coord3D,
+        key2: str | Coord3D,
+    ) -> tuple[float, list[Station]]:
         '''Shortest Path between two stations (see Station.shortestpath)'''
         return self[key1].shortestpath(self[key2])
 
-    def neareststations(self, other):
+    def neareststations(self, other: Survex3D) -> tuple[float, Station, Station]:
         '''
         Finds the two nearest stations between two surveys.
         Returns a tuple of (distance, station1, station2).
@@ -431,7 +455,7 @@ class Survex3D(object):
         j = d.argmin()
         return d[j], self[X[i[j]]], other[Y[j]]
 
-    def _neareststations_no_scipy(self, other, X, Y):
+    def _neareststations_no_scipy(self, other: Survex3D, X: list[Coord3D], Y) -> tuple[float, Station, Station]:
         try:
             from numpy import array
         except ImportError:
@@ -450,16 +474,16 @@ class Survex3D(object):
             if d_sq[j] < m:
                 im, jm, m = i, j, d_sq[j]
 
-        return m**0.5, self[tuple(X[im])], other[tuple(Y[jm])]
+        return m**0.5, self[as_c3d(X[im])], other[as_c3d(Y[jm])]
 
-    def load(self, filename):
+    def load(self, filename: PathLike | str | bytes) -> None:
         '''
         Load 3d file
         '''
         with open(filename, 'rb') as stream:
             self.read_stream(stream)
 
-    def read_stream(self, f):
+    def read_stream(self, f: BinaryIO) -> None:
         from struct import unpack
 
         line = f.readline()  # File ID
@@ -482,10 +506,10 @@ class Survex3D(object):
         self.timestamp = f.readline().rstrip()  # Timestamp
         self.flags = 0x0
 
-        def read_xyz():
+        def read_xyz() -> Coord3D:
             return unpack('<iii', f.read(12))
 
-        def read_len():
+        def read_len() -> int:
             length = ord(f.read(1))
             if length == 0xfe:
                 length += unpack('<H', f.read(2))[0]
@@ -493,21 +517,21 @@ class Survex3D(object):
                 length += unpack('<I', f.read(4))[0]
             return length
 
-        def _read_label(n):
+        def _read_label(n: int) -> str:
             return f.read(n).decode('ascii')
 
-        def read_label():
+        def read_label() -> None:
             length = read_len()
             if length > 0:
                 self._curr_label += _read_label(length)
 
-        def read_len_v8():
+        def read_len_v8() -> int:
             byte = ord(f.read(1))
             if byte != 0xFF:
                 return byte
             return unpack('<I', f.read(4))[0]
 
-        def read_label_v8():
+        def read_label_v8() -> None:
             byte = ord(f.read(1))
             if byte != 0x00:
                 ndel = byte >> 4
@@ -518,8 +542,8 @@ class Survex3D(object):
             oldlen = len(self._curr_label)
             self._curr_label = self._curr_label[:oldlen - ndel] + _read_label(nadd)
 
-        def skip_bytes(n):
-            return f.read(n)
+        def skip_bytes(n: int) -> None:
+            f.read(n)
 
         if ff_version >= 8:
             self.flags = ord(f.read(1))
@@ -527,11 +551,11 @@ class Survex3D(object):
             style = -1
 
             while True:
-                byte = f.read(1)
-                if not byte:
+                realbyte = f.read(1)
+                if not realbyte:
                     break
 
-                byte = ord(byte)
+                byte = ord(realbyte)
 
                 if byte <= 0x05:
                     # STYLE_*
@@ -597,11 +621,11 @@ class Survex3D(object):
 
         # ff_version < 8
         while True:
-            byte = f.read(1)
-            if not byte:
+            realbyte = f.read(1)
+            if not realbyte:
                 break
 
-            byte = ord(byte)
+            byte = ord(realbyte)
 
             if byte == 0x00:
                 # STOP
@@ -709,7 +733,7 @@ class DateNoneType(Date):
 Date.end = DateNone = DateNoneType(1, 1, 1)
 
 
-def natkey(s):
+def natkey(s: str):
     '''
     Key function for "natural sorting" of strings.
 
@@ -719,7 +743,8 @@ def natkey(s):
     ['1', '1a', '2', '10']
     '''
     L = len(s)
-    r, i, d = [], 0, False
+    r: list[str | int] = []
+    i, d = 0, False
     for j in range(L):
         if d != s[j].isdigit():
             r.append(int(s[i:j]) if d else s[i:j].lower())
