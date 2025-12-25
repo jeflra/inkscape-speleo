@@ -51,18 +51,26 @@ def xvi2svg(handle, fullsvg=True, strokewidth=6, XVIroot='',
     stationcoords = set(tuple(line.split()[:2]) for line in stations)
 
     root = etree.fromstring("""<?xml version="1.0" ?>
-<svg
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
-   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
-   xmlns:therion="http://therion.speleo.sk/therion"
-   xmlns="http://www.w3.org/2000/svg">
-</svg>
-""")
+    <svg
+    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+    xmlns:therion="http://therion.speleo.sk/therion"
+    xmlns="http://www.w3.org/2000/svg">
+    </svg>
+    """)
 
     if not fullsvg:
         root = etree.SubElement(root, th2ex.svg_g)
 
     g_shots = etree.SubElement(root, th2ex.svg_g, {th2ex.inkscape_label: 'Shots'})
+
+    # dict mapping coordinates to (a,b) where a is the name of the
+    # corresponding station and b the svg layer that will contain
+    # the splay shots from station a
+    coords_dict = {str(line.split()[:2]) :
+                   (a:=line.split()[2],
+                    etree.SubElement(g_shots, th2ex.svg_g, {th2ex.inkscape_label: 'Splay from ' + a}))
+                       for line in stations}
 
     def process_shots(splays: bool):
         style = (f"stroke:#f00;stroke-width:{strokewidth / 2}" if (not splays) else
@@ -73,12 +81,26 @@ def xvi2svg(handle, fullsvg=True, strokewidth=6, XVIroot='',
                       tuple(coords[2:4]) in stationcoords)
             if is_leg == splays:
                 continue
+
+            if is_leg:
+                # label with names of origin and destination stations
+                label = "Leg " \
+                    + coords_dict[str(coords[0:2])][0] \
+                    + " -> " + \
+                    coords_dict[str(coords[2:4])][0]
+                layer =g_shots
+            else:
+                label = "Splay shot"
+                layer = coords_dict[str(coords[0:2])][1]
+
             coords[1::2] = map(invert_str, coords[1::2])
             coords_str = ' '.join(coords)
-            etree.SubElement(g_shots, th2ex.svg_path, {
+            etree.SubElement(layer, th2ex.svg_path, {
                 'd': 'M ' + coords_str,
                 'style': f'fill:none;' + style,
+                th2ex.inkscape_label: label,
             })
+
 
     process_shots(True)
     process_shots(False)
@@ -109,6 +131,7 @@ def xvi2svg(handle, fullsvg=True, strokewidth=6, XVIroot='',
             'style': f'font-size: {strokewidth * 10}',
             'x': x,
             'y': y,
+            th2ex.inkscape_label: 'Station ' + label,
         })
         e.text = label
         # station could exist multiple times, take first one
